@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.modules.utils import _single
+import convtbcglu
 
 manual_init = (0.10, 0.83, 0.23, 0.42, 0.80, 0.34, 0.53, 0.23, 0.43, 0.35,
                0.42, 0.30, 0.23, 0.45, 0.62, 0.45, 0.53, 0.28, 0.63, 0.24,
@@ -50,16 +51,16 @@ class ConvGLUTest(nn.Module):
         #print(self.bias)
 
     def forward(self, input):
-        x = torch.conv_tbc(input.contiguous(), self.weight,
-                           self.bias, self.padding[0])
+        #x = torch.conv_tbc(input.contiguous(), self.weight,
+        #                   self.bias, self.padding[0])
 
         #print(x.size())
         #print(x)
 
-        return F.glu(x, dim=0)
+        #return F.glu(x, dim=0)
         # TODO: our target
-        #return convtbcglu.forward(input.contiguous(), self.weight,
-        #                          self.bias, self.padding[0])
+        return convtbcglu.forward(input.contiguous(), self.weight,
+                                  self.bias, self.padding[0])
 
 def main(argv):
 
