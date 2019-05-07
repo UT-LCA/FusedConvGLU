@@ -5,6 +5,10 @@ Instruction
 ~~~bash
 docker pull hibagus/superscalar-project:pytorch-1.1.0
 ~~~
+Or build the image from the [Dockerfile](Dockerfile) in this folder:
+~~~bash
+docker build . -t hibagus/superscalar-project:pytorch-1.1.0
+~~~
 
 2. Launch a container with this repository amounted:
 ~~~bash
