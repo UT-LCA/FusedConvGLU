@@ -21,7 +21,7 @@ manual_init = (0.10, 0.83, 0.23, 0.42, 0.80, 0.34, 0.53, 0.23, 0.43, 0.35,
                0.07, 0.32, 0.34, 0.82, 0.32, 0.32, 0.42, 0.01, 0.84, 0.45)
 
 class ConvGLUTest(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding=0):
+    def __init__(self, in_channels, out_channels, kernel_size, padding, device):
         super(ConvGLUTest, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -32,6 +32,7 @@ class ConvGLUTest(nn.Module):
         self.weight = torch.nn.Parameter(torch.Tensor(
             self.kernel_size[0], in_channels, out_channels))
         self.bias = torch.nn.Parameter(torch.Tensor(out_channels))
+
         cnt = 0
         for i in range(self.kernel_size[0]):
             for j in range(in_channels):
@@ -48,6 +49,11 @@ class ConvGLUTest(nn.Module):
         #print(self.weight)
         #print("bias")
         #print(self.bias.size())
+        #print(self.bias)
+        cuda_device = torch.device(device)
+        self.weight = torch.nn.Parameter(self.weight.cuda(cuda_device))
+        self.bias = torch.nn.Parameter(self.bias.cuda(cuda_device))
+        #print(self.weight)
         #print(self.bias)
 
     def forward(self, input):
@@ -111,14 +117,15 @@ def main(argv):
     x = torch.tensor(tensor3D, dtype=torch.float)
 
     cuda_device = torch.device(arg_list.device)
-    x.cuda(cuda_device) # copy to GPU memory
+    x = x.cuda(cuda_device) # return a copy on GPU memory
 
     # build a single layer to perform convolution and GLU
     single_layer = ConvGLUTest(arg_list.in_channels, arg_list.out_channels,
-                               arg_list.kernel_sizes, arg_list.padding[0]);
+                               arg_list.kernel_sizes, arg_list.padding[0],
+                               arg_list.device);
 
     y = single_layer.forward(x)
-    y.cpu() # copy to CPU memory
+    y = y.cpu() # copy to CPU memory
 
     #print("tensor3D out")
     #print(y)

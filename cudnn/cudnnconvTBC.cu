@@ -9,6 +9,16 @@
 #include <cstdlib>
 #include <cudnn.h>
 
+std::string CONV_FWD_ALGO[8] = {
+  "IMPLICIT_GEMM",
+  "IMPLICIT_PRECOMP_GEMM",
+  "GEMM",
+  "DIRECT",
+  "FFT",
+  "FFT_TILING",
+  "WINOGRAD",
+  "WINOGRAD_NONFUSED"};
+
 //function to print out error message from cuDNN calls
 #define checkCUDNN(exp) \
   { \
@@ -68,10 +78,14 @@ void reorg_weights(int *Wdims, float *Win, float *Wout) {
 
 int main(int argc, char *argv[]) {
 
+  int pads = 0;
   if (3 > argc) {
-    std::cout << "Usage: " << argv[0] << " <W> <I>\n";
+    std::cout << "Usage: " << argv[0] << " <W> <I> [pads=0]\n";
     return -1;
+  } else if (3 < argc) {
+    pads = atoi(argv[3]);
   }
+
   //std::cout << cudnnGetVersion() << std::endl;
 
   // read the filter from file
@@ -164,7 +178,7 @@ int main(int argc, char *argv[]) {
   int Odims4D[4] = {Idims[1], // B of outputs equals to B of inputs
                     Wdims[2], // C of outputs equals to O of weights
                     1, // to makeup 4D tensor for convolution
-                    Idims[0] - Wdims[0] + 1}; // T of outputs
+                    Idims[0] - Wdims[0] + 1 + 2 * pads}; // T of outputs
   int Ostride[4] = {Odims4D[1], // next batch comes after all in_ch
                     1, // next channel is stored to the next
                     1, // will not got non-zero coo on this dimension
@@ -172,7 +186,7 @@ int main(int argc, char *argv[]) {
   int Osize = Odims4D[0] * Odims4D[1] * Odims4D[3];
   float *Odata = new float[Osize];
 
-  int pad0s[2] = {0, 0}; // no padding is needed due to all strides of 1
+  int pad0s[2] = {0, pads};
   int dilation1s[2] = {1, 1}; // dilations
   int stride1s[2] = {1, 1}; // strides
 
@@ -215,20 +229,21 @@ int main(int argc, char *argv[]) {
                                         Odims4D,                // size
                                         Ostride));              // stride
   //// find convolution algorithm
-  int algos_cnt = 10;
-  cudnnConvolutionFwdAlgoPerf_t conv_algos[10];
+  int algos_cnt = 8;
+  cudnnConvolutionFwdAlgoPerf_t conv_algos[8];
   checkCUDNN(cudnnFindConvolutionForwardAlgorithm(cudnn,
                                                   in_desc,
                                                   fil_desc,
                                                   conv_desc,
                                                   out_desc,
-                                                  9,
+                                                  algos_cnt,
                                                   &algos_cnt,
                                                   conv_algos));
   bool isfeasible = false;
-  for (int i = 0; 0 == conv_algos[i].status; ++i) {
-    std::cout << "cudnnConvolutionFwdAlgo_t: " << conv_algos[i].algo <<
-      "(" << conv_algos[i].time << " ms)\n";
+  for (int i = 0; i < algos_cnt && 0 == conv_algos[i].status; ++i) {
+    std::cout << "cudnnConvolutionFwdAlgo_t: " <<
+      CONV_FWD_ALGO[conv_algos[i].algo] <<
+      " (" << conv_algos[i].time << " ms)\n";
     std::cout << "workspace: " << conv_algos[i].memory << " "
       "determinism: " << conv_algos[i].determinism << " "
       "mathType: " << conv_algos[i].mathType << std::endl;

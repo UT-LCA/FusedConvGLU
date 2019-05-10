@@ -1,4 +1,4 @@
-FROM nvidia/cuda:10.0-base-ubuntu16.04
+FROM nvidia/cuda:10.0-cudnn7-devel-ubuntu16.04
 
 # Install some basic utilities
 RUN apt-get update && apt-get install -y \
