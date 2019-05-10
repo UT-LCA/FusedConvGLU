@@ -23,11 +23,13 @@ const char *convtbcglu_forward_name = "convtbcglu_forward";
 // Check arguments to convtbcglu_forward
 void convtbcglu_forward_check(
     const torch::Tensor& inputs,
-    const torch::Tensor& weight) {
+    const torch::Tensor& weight,
+    const torch::Tensor& convout) {
   // Create TensorArgs. These record the names and positions of each tensor as a
   // parameter.
   torch::TensorArg arg_inputs(inputs, "inputs", 0);
   torch::TensorArg arg_weight(weight, "weight", 1);
+  torch::TensorArg arg_convout(convout, "convout", 2);
   // Check arguments. No need to return anything. These functions with throw an
   // error if they fail. Messages are populated using information from
   // TensorArgs.
@@ -38,6 +40,10 @@ void convtbcglu_forward_check(
   torch::checkContiguous(convtbcglu_forward_name, arg_weight);
   torch::checkScalarType(convtbcglu_forward_name, arg_weight, torch::kFloat);
   torch::checkBackend(convtbcglu_forward_name, arg_weight.tensor,
+                      torch::Backend::CUDA);
+  torch::checkContiguous(convtbcglu_forward_name, arg_convout);
+  torch::checkScalarType(convtbcglu_forward_name, arg_convout, torch::kFloat);
+  torch::checkBackend(convtbcglu_forward_name, arg_convout.tensor,
                       torch::Backend::CUDA);
 }
 
@@ -113,12 +119,13 @@ torch::Tensor convtbcglu_forward(
     inputs.to(device_GPU, inputs.scalar_type(),
               /*non-blocking=*/false, /*copy=*/true);
   auto o_t_len = i_t_len - w_k_len + 1 + pad * 2;
-  torch::Tensor outputs = at::empty({o_t_len, i_b_len, w_o_ch},
-                                    inputs.options());
-  outputs.copy_(bias.expand({o_t_len, i_b_len, w_o_ch}));
-  torch::Tensor outputs_GPU = (outputs.is_cuda()) ? outputs.alias() :
-    outputs.to(device_GPU, outputs.scalar_type(),
-               /*non-blocking=*/false, /*copy=*/true);
+  torch::Tensor convout_GPU = at::empty({o_t_len, i_b_len, w_o_ch},
+                                        inputs.options());
+  if (!convout_GPU.is_cuda()) {
+    convout_GPU = convout_GPU.to(device_GPU, convout_GPU.scalar_type(),
+                                 /*non-blocking=*/false, /*copy=*/false);
+  }
+  convout_GPU.copy_(bias.expand({o_t_len, i_b_len, w_o_ch}));
 
   std::cout << "inputs_GPU\n";
   std::cout << inputs_GPU << std::endl;
@@ -131,7 +138,7 @@ torch::Tensor convtbcglu_forward(
 
   // Step 1: Check inputs. This will throw an error if inputs are invalid, so no
   // need to check return codes here.
-  convtbcglu_forward_check(inputs_GPU, weight_GPU);
+  convtbcglu_forward_check(inputs_GPU, weight_GPU, convout_GPU);
   // Step 2: Create descriptors
   cudnnHandle_t cudnn_desc = torch::native::getCudnnHandle();
   // Note: 4 is minimum dim for a TensorDescriptor.
@@ -151,7 +158,7 @@ torch::Tensor convtbcglu_forward(
   torch::native::FilterDescriptor fil_desc;
   fil_desc.set(weight_GPU, 4);
 
-  torch::native::TensorDescriptor output_tensor_desc(outputs_GPU, 4);
+  torch::native::TensorDescriptor output_tensor_desc(convout_GPU, 4);
   output_tensor_desc.set(CUDNN_DATA_FLOAT,
                          {i_b_len, w_o_ch, 1, o_t_len},
                          {w_o_ch, 1, 1, i_b_len * w_o_ch},
@@ -206,8 +213,8 @@ torch::Tensor convtbcglu_forward(
     if (conv_algos[0].memory) {
       cudaMalloc(&workspace, conv_algos[0].memory);
     }
-    std::cout << "outputs_GPU before covolution\n";
-    std::cout << outputs_GPU << std::endl;
+    std::cout << "convout_GPU before covolution\n";
+    std::cout << convout_GPU << std::endl;
     float alpha = 1.0;
     float beta = 1.0;
     AT_CUDNN_CHECK(cudnnConvolutionForward(cudnn_desc,
@@ -222,23 +229,45 @@ torch::Tensor convtbcglu_forward(
                                            conv_algos[0].memory,
                                            &beta,
                                            output_tensor_desc.desc(),
-                                           outputs_GPU.data_ptr()));
-    std::cout << "outputs_GPU after covolution\n";
-    std::cout << outputs_GPU << std::endl;
+                                           convout_GPU.data_ptr()));
+    std::cout << "convout_GPU after covolution\n";
+    std::cout << convout_GPU << std::endl;
 
     if (conv_algos[0].memory) {
       cudaFree(workspace);
     }
   }
 
-  if (outputs.is_cuda()) {
-    if (outputs.is_alias_of(outputs_GPU)) { // should have been updated
-    } else {
-      outputs = outputs_GPU.to(device_GPU, outputs.scalar_type(), false, true);
-    }
+  ////////////////////
+  // To perform GLU //
+  ////////////////////
+  std::cout << "convout_GPU.narrow().sigmoid_()\n";
+  std::cout << convout_GPU.narrow(/*dimension=*/0, /*start=*/o_t_len / 2,
+                                  /*length=*/o_t_len / 2).sigmoid_();
+  std::cout << std::endl;
+  std::cout << "convout_GPU after sigmoid\n";
+  std::cout << convout_GPU << std::endl;
+
+  convout_GPU.narrow(0, 0, o_t_len / 2) *=
+    convout_GPU.narrow(0, o_t_len / 2, o_t_len / 2);
+  std::cout << "convout_GPU after multiplication\n";
+  std::cout << convout_GPU << std::endl;
+
+  torch::Tensor outputs = at::empty({o_t_len / 2, i_b_len, w_o_ch},
+                                     inputs.options());
+  if (outputs.is_cuda()) { // make outputs on the same device as inputs
+    outputs = convout_GPU.narrow(0, 0, o_t_len / 2).alias();
   } else {
-    outputs = outputs_GPU.to(device_CPU, outputs.scalar_type(), false, true);
+    outputs = convout_GPU.narrow(0, 0, o_t_len / 2).to(
+        device_CPU, outputs.scalar_type(), false, true);
   }
+
+  // They are automatically freed after exit this routine
+  //AT_CUDNN_CHECK(cudnnDestroyTensorDescriptor(output_tensor_desc.desc()));
+  //AT_CUDNN_CHECK(cudnnDestroyTensorDescriptor(input_tensor_desc.desc()));
+  //AT_CUDNN_CHECK(cudnnDestroyFilterDescriptor(fil_desc.desc()));
+  //AT_CUDNN_CHECK(cudnnDestroyConvolutionDescriptor(conv_desc.desc()));
+  //AT_CUDNN_CHECK(cudnnDestroy(cudnn_desc));
 
   return outputs;
 }
