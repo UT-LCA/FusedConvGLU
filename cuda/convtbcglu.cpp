@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <math.h>
 
 void printSelfTensor(const torch::Tensor& tensortoPrint)
 {
@@ -139,7 +140,7 @@ torch::Tensor convtbcglu_forward(
   // Prepare the output tensor
   torch::Tensor output = at::empty(
                               {
-								  outputLength,
+								  outputLength/2,
 								  batchSize,
 								  outputPlanes,
 							   }, 
@@ -157,30 +158,43 @@ torch::Tensor convtbcglu_forward(
   printBiasTensor(bias);
   
   // Copy the bias to the output
-  output.copy_(bias.expand(output.sizes()));
+  //output.copy_(bias.expand(output.sizes()));
   std::cout<<"Output Tensor"<<std::endl;
   printOutTensor(output);
   //output[0][0][0] = output[0][0][0] + 0.001;
   //printSelfTensor(output);
   
+  int halfSlide = outputLength/2; // it must be guaranted that outputLength is even.
+  
   for(int outputChannel = 0; outputChannel < outputPlanes; outputChannel++)
   {
-	  for(int slide = 0; slide < outputLength; slide++)
+	  for(int slide = 0; slide < halfSlide; slide++)
 	  {
+
 		  for(int batch = 0; batch < batchSize; batch++)
 		  {
-			  output[slide][batch][outputChannel] = bias[outputChannel];
+			  torch::Tensor frontSlide = bias[outputChannel];
+			  torch::Tensor rearSlide  = bias[outputChannel];
+			  // front slide
 		      for(int inputChannel = 0; inputChannel < inputPlanes; inputChannel++)
-		      {	
-				  
+		      {					  
 				  int inputStart = slide;
 				  for(int kernel = 0; kernel < kernelSize; kernel++)
 				  {
-					  output[slide][batch][outputChannel] = output[slide][batch][outputChannel] + weight[kernel][inputChannel][outputChannel] * self[inputStart+kernel][batch][inputChannel];
-					  std::cout << "kernel: " << kernel << " Input: " << inputStart << std::endl;
-					  printOutTensor(output);
+					  frontSlide = frontSlide + weight[kernel][inputChannel][outputChannel] * self[inputStart+kernel][batch][inputChannel];
+				  }		   
+		      }			  
+			  // rear slide
+			  for(int inputChannel = 0; inputChannel < inputPlanes; inputChannel++)
+		      {					  
+				  int inputStart = slide+halfSlide;
+				  for(int kernel = 0; kernel < kernelSize; kernel++)
+				  {
+					  rearSlide = rearSlide + weight[kernel][inputChannel][outputChannel] * self[inputStart+kernel][batch][inputChannel];
 				  }		   
 		      }
+			  // applying GLU
+			   output[slide][batch][outputChannel] = frontSlide * exp(rearSlide)/(exp(rearSlide)+1);
 		  }
 	  }
 	  
