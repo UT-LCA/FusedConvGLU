@@ -3,6 +3,14 @@
 #include <iostream>
 #include <iomanip>
 #include <math.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+cudaError_t convtbcglu_cuda(int inputPlanes, int kernelSize, int outputPlanes, int halfSlide, int batchSize, 
+                    const torch::Tensor& self,
+                    const torch::Tensor& weight,
+                    const torch::Tensor& bias,
+					torch::Tensor& output);
 
 void printSelfTensor(const torch::Tensor& tensortoPrint)
 {
@@ -166,39 +174,12 @@ torch::Tensor convtbcglu_forward(
   
   int halfSlide = outputLength/2; // it must be guaranted that outputLength is even.
   
-  for(int outputChannel = 0; outputChannel < outputPlanes; outputChannel++)
-  {
-	  for(int slide = 0; slide < halfSlide; slide++)
-	  {
-
-		  for(int batch = 0; batch < batchSize; batch++)
-		  {
-			  torch::Tensor frontSlide = bias[outputChannel];
-			  torch::Tensor rearSlide  = bias[outputChannel];
-			  // front slide
-		      for(int inputChannel = 0; inputChannel < inputPlanes; inputChannel++)
-		      {					  
-				  int inputStart = slide;
-				  for(int kernel = 0; kernel < kernelSize; kernel++)
-				  {
-					  frontSlide = frontSlide + weight[kernel][inputChannel][outputChannel] * self[inputStart+kernel][batch][inputChannel];
-				  }		   
-		      }			  
-			  // rear slide
-			  for(int inputChannel = 0; inputChannel < inputPlanes; inputChannel++)
-		      {					  
-				  int inputStart = slide+halfSlide;
-				  for(int kernel = 0; kernel < kernelSize; kernel++)
-				  {
-					  rearSlide = rearSlide + weight[kernel][inputChannel][outputChannel] * self[inputStart+kernel][batch][inputChannel];
-				  }		   
-		      }
-			  // applying GLU
-			   output[slide][batch][outputChannel] = frontSlide * exp(rearSlide)/(exp(rearSlide)+1);
-		  }
-	  }
-	  
-  }
+  convtbcglu_cuda(inputPlanes, kernelSize, outputPlanes, halfSlide, batchSize,
+                  self, weight, bias, output);
+  printOutTensor(output);
+  
+  // Now CUDA //
+  
   
   
   /*
@@ -220,7 +201,7 @@ torch::Tensor convtbcglu_forward(
 	printOutTensor(output);
   }
   */
-  printOutTensor(output);
+  
   return output;
   
   
@@ -299,8 +280,7 @@ void convtbcglu_backernelSizeard(
 }
 
 
-
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("forward", &convtbcglu_forward, "conv_tbc forward fused with glu");
-  m.def("backernelSizeard", &convtbcglu_backernelSizeard, "conv_tbc backernelSizeard fused with glu");
+  m.def("forward", &convtbcglu_forward, "conv_tbc CUDA forward fused with glu");
+  m.def("backernelSizeard", &convtbcglu_backernelSizeard, "conv_tbc CUDA backernelSizeard fused with glu");
 }
