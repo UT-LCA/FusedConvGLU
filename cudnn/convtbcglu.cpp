@@ -106,15 +106,21 @@ torch::Tensor convtbcglu_forward(
 
   torch::Device device_CPU(torch::kCPU);
   torch::Device device_GPU(torch::kCUDA);
-  torch::Tensor weight_CPU = weight.to(device_CPU, weight.scalar_type(),
-                                       /*non-blocking=*/false, /*copy=*/true);
-  torch::Tensor weight4D = at::empty({w_o_ch, w_i_ch, 1, w_k_len},
-                                     weight_CPU.options());
-  long int w_dims[3] = {w_k_len, w_i_ch, w_o_ch};
-  reorg_weights(w_dims, (float*)weight_CPU.data_ptr(),
-                (float*)weight4D.data_ptr());
-  torch::Tensor weight_GPU = weight4D.to(device_GPU, weight.scalar_type(),
-                                         false, true);
+  //torch::Tensor weight_CPU = weight.to(device_CPU, weight.scalar_type(),
+  //                                     /*non-blocking=*/false, /*copy=*/true);
+  //torch::Tensor weight4D = at::empty({w_o_ch, w_i_ch, 1, w_k_len},
+  //                                   weight_CPU.options());
+  //long int w_dims[3] = {w_k_len, w_i_ch, w_o_ch};
+  //reorg_weights(w_dims, (float*)weight_CPU.data_ptr(),
+  //              (float*)weight4D.data_ptr());
+  //torch::Tensor weight_GPU = weight4D.to(device_GPU, weight.scalar_type(),
+  //                                       false, true);
+  torch::Tensor weight_GPU =
+    weight.transpose(0, 2).contiguous().view({w_o_ch, w_i_ch, 1, w_k_len});
+  if (!weight_GPU.is_cuda()) {
+    weight_GPU = weight_GPU.to(device_GPU, weight_GPU.scalar_type(),
+                               /*non-blocking=*/false, /*copy=*/true);
+  }
   torch::Tensor inputs_GPU = (inputs.is_cuda()) ? inputs.alias() :
     inputs.to(device_GPU, inputs.scalar_type(),
               /*non-blocking=*/false, /*copy=*/true);
