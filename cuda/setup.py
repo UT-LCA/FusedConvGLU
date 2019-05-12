@@ -12,8 +12,7 @@ setup(
         CUDAExtension('convtbcglu_cuda', [
             'convtbcglu.cpp',
             'convtbcglu_cuda.cu',
-        ],
-		extra_compile_args={'cxx': ['-Wall'], 'nvcc': ['-arch=sm_70']}
+        ]
 		)  
 		
     ],

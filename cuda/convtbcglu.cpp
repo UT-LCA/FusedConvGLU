@@ -6,7 +6,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-cudaError_t convtbcglu_cuda(int inputPlanes, int kernelSize, int outputPlanes, int halfSlide, int batchSize, 
+extern cudaError_t convtbcglu_cuda(int inputPlanes, int kernelSize, int outputPlanes, int halfSlide, int batchSize, 
                     const torch::Tensor& self,
                     const torch::Tensor& weight,
                     const torch::Tensor& bias,

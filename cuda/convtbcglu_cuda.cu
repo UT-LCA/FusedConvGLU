@@ -4,24 +4,8 @@
 #include <torch/extension.h>
 #include <ATen/ATen.h>
 
-template <typename scalar_t>
-__global__ 
-void childConvolve(int batch, int outputChannel, int inputPlanes, int kernelSize, int slide, 
-                         const torch::PackedTensorAccessor<scalar_t,3,torch::RestrictPtrTraits,size_t> self,
-                         const torch::PackedTensorAccessor<scalar_t,3,torch::RestrictPtrTraits,size_t> weight,
-                         const torch::PackedTensorAccessor<scalar_t,1,torch::RestrictPtrTraits,size_t> bias,
-					     float* Output)
-{
-	int _myID     = threadIdx.x + blockIdx.x * blockDim.x;
-	int _myKernel = _myID % kernelSize;
-	int _myChannel= _myID / kernelSize;
-	
-	if(_myChannel<inputPlanes)
-	{
-		float result = weight[_myKernel][_myChannel][outputChannel] * self[slide+_myKernel][batch][_myChannel];
-		atomicAdd(Output,result);
-	}
-}
+#define numThread 1024
+
 
 template <typename scalar_t>
 __global__
@@ -40,41 +24,40 @@ void parentConvolve(int inputPlanes, int kernelSize, int outputPlanes, int halfS
 	if(_myOutputChannel<outputPlanes)
 	{
 		
-		__shared__ float OutputFront;
-		__shared__ float OutputRear;
+		float OutputFront;
+		float OutputRear;
 		
 		OutputFront = bias[_myOutputChannel];
 		OutputRear  = OutputFront;
 		
 		//printf("Hello from Device: %f\n", bias[_myOutputChannel]); 
-		//cudaStream_t frontStream;
-		//cudaStream_t rearStream;
+        // front slide
 		
-		//cudaStreamCreate(&frontStream);
-		//cudaStreamCreate(&rearStream);
-		
-		int numThread= 1024;
-		int numBlock = (inputPlanes * kernelSize + numThread) / numThread;
-		
-		// Convolve
-		//childConvolve<<<numBlock, numThread>>>(_myBatch,_myOutputChannel,inputPlanes,
-		//                                        kernelSize,_mySlide,self,weight,bias,
-		//										&OutputFront);
-		//childConvolve<<<numBlock, numThread>>>(_myBatch,_myOutputChannel,inputPlanes,
-		//                                        kernelSize,_mySlide+halfSlide,self,weight,bias,
-		//										&OutputRear);
-		//cudaStreamSynchronize(frontStream);
-        //cudaStreamSynchronize(rearStream);		
+		for(int inputChannel = 0; inputChannel < inputPlanes; inputChannel++)
+        {					  
+      	  int inputStart = _mySlide;
+      	  for(int kernel = 0; kernel < kernelSize; kernel++)
+      	  {
+      		  OutputFront = OutputFront + weight[kernel][inputChannel][_myOutputChannel] * self[inputStart+kernel][_myBatch][inputChannel];
+      	  }		   
+      	}			  
+      	// rear slide
+      	for(int inputChannel = 0; inputChannel < inputPlanes; inputChannel++)
+      	{					  
+      	  int inputStart = _mySlide+halfSlide;
+      	  for(int kernel = 0; kernel < kernelSize; kernel++)
+      	  {
+      		  OutputRear = OutputRear + weight[kernel][inputChannel][_myOutputChannel] * self[inputStart+kernel][_myBatch][inputChannel];
+      	  }		   
+      	 }
+
         // GLU
         output[_mySlide][_myBatch][_myOutputChannel] = 	OutputFront * expf(OutputRear)/(expf(OutputRear)+1);
 		//output[_mySlide][_myBatch][_myOutputChannel] = 0.5;
-		// Cleanup
-        //cudaStreamDestroy(frontStream);
-        //cudaStreamDestroy(rearStream);		
 	}
 }
 
-cudaError_t convtbcglu_cuda(int inputPlanes, int kernelSize, int outputPlanes, int halfSlide, int batchSize, 
+extern cudaError_t convtbcglu_cuda(int inputPlanes, int kernelSize, int outputPlanes, int halfSlide, int batchSize, 
                     const torch::Tensor& self,
                     const torch::Tensor& weight,
                     const torch::Tensor& bias,
@@ -89,14 +72,13 @@ cudaError_t convtbcglu_cuda(int inputPlanes, int kernelSize, int outputPlanes, i
     {
         std::cout << "CUDA is available! Run on GPU." << std::endl;
         deviceGPU = torch::Device(torch::kCUDA);
-		
-		
+			
 		torch::Tensor selfGPU    = self.to(deviceGPU,at::kFloat,false,true);
 		torch::Tensor weightGPU  = weight.to(deviceGPU,at::kFloat,false,true);
 		torch::Tensor biasGPU    = bias.to(deviceGPU,at::kFloat,false,true);
 		torch::Tensor outputGPU  = output.to(deviceGPU,at::kFloat,false,true);
 		
-		int numThread = 1024;
+		//int numThread = 1024;
 	    int numBlock  = (batchSize * halfSlide * outputPlanes + numThread)  / numThread;
 	
 	    AT_DISPATCH_FLOATING_TYPES(self.type(), "convtbcglu_cuda", ([&] {
@@ -124,6 +106,7 @@ cudaError_t convtbcglu_cuda(int inputPlanes, int kernelSize, int outputPlanes, i
 	else
 	{
 		// CPU
+		std::cout << "CUDA is not available! Run on CPU." << std::endl;
 		for(int outputChannel = 0; outputChannel < outputPlanes; outputChannel++)
         {
       	  for(int slide = 0; slide < halfSlide; slide++)
