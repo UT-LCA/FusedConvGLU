@@ -40,9 +40,13 @@ It should print out the method's signature, which matches what you defined in th
 
 6. Run the test script:
 ~~~bash
-./convglu.py testin
+./convglu.py --loss testloss testin
 ~~~
 The expected output is in the file `testout`.
 If the output file, `test.tsv`, you generated just now,
 has no difference with `testout`,
-then congratulations!
+then congratulations, you get the forward implemented correctly.  
+The expected gradiant is in the file `testgrads`.
+If the output gradiant file, `test_grads.tsv`, you generated just now,
+has no different with `testgrads`,
+then congratulations again, you get the backward implemented right as well!

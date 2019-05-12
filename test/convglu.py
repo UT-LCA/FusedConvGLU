@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.modules.utils import _single
+from torch.autograd import Variable
 import convtbcglu
 
 manual_init = (0.10, 0.83, 0.23, 0.42, 0.80, 0.34, 0.53, 0.23, 0.43, 0.35,
@@ -57,16 +58,16 @@ class ConvGLUTest(nn.Module):
         #print(self.bias)
 
     def forward(self, input):
-        #x = torch.conv_tbc(input.contiguous(), self.weight,
-        #                   self.bias, self.padding[0])
+        x = torch.conv_tbc(input.contiguous(), self.weight,
+                           self.bias, self.padding[0])
 
         #print(x.size())
         #print(x)
 
-        #return F.glu(x, dim=0)
+        #return F.glu(x, dim=0), x
         # TODO: our target
         return convtbcglu.forward(input.contiguous(), self.weight,
-                                  self.bias, self.padding[0])
+                                  self.bias, self.padding[0]), x
 
 def main(argv):
 
@@ -81,10 +82,12 @@ def main(argv):
     parser.add_argument("--kernel-sizes", dest="kernel_sizes", default=[3],
                         nargs="+", type=int,
                         help="The convolution filter sizes")
-    parser.add_argument("--padding", dest="padding", default=[0],
-                        nargs="+", type=int, help="Padding the input")
+    parser.add_argument("--padding", dest="padding", default=0,
+                        type=int, help="Padding the input on Time dimension")
     parser.add_argument("--device", dest="device", default="cuda:0",
                         help="The cuda device to run the experiment")
+    parser.add_argument("--loss", dest="loss", type=str,
+                        help="The file having loss")
     parser.add_argument("-o", dest="foname", default="test",
                         help="Iutput file base name")
     arg_list = parser.parse_args(argv[1:])
@@ -118,14 +121,17 @@ def main(argv):
 
     cuda_device = torch.device(arg_list.device)
     x = x.cuda(cuda_device) # return a copy on GPU memory
+    x = Variable(x, requires_grad=True)
 
     # build a single layer to perform convolution and GLU
     single_layer = ConvGLUTest(arg_list.in_channels, arg_list.out_channels,
-                               arg_list.kernel_sizes, arg_list.padding[0],
+                               arg_list.kernel_sizes, arg_list.padding,
                                arg_list.device);
 
-    y = single_layer.forward(x)
-    y = y.cpu() # copy to CPU memory
+    y, convout = single_layer.forward(x)
+    #y = y.cpu() # copy to CPU memory
+    convout = Variable(convout, requires_grad=True)
+    y2 = F.glu(convout, dim=0)
 
     #print("tensor3D out")
     #print(y)
@@ -139,6 +145,62 @@ def main(argv):
                 fo.write("\t")
             fo.write("\n")
     fo.close()
+
+    if (None != arg_list.loss):
+        fi = open(arg_list.loss)
+        tensor2D = list()
+        for line in fi.readlines():
+            tensor1D = [float(element) for element in line.strip().split('\t')]
+            if (len(tensor1D) < y.size(0)): # need padding
+                tensor1D = tensor1D + [0] * (y.size(0) - len(tensor1D))
+            elif (len(tensor1D) > y.size(0)): # need slicing
+                tensor1D = tensor1D[0:y.size(0)]
+            tensor2D.append(tensor1D)
+        fi.close()
+        tensor3D = np.array(tensor2D).reshape(y.size(0),
+                                              arg_list.out_channels, -1)
+        dy = torch.tensor(tensor3D, dtype=torch.float, device=cuda_device)
+        dy.transpose_(1, 2) # make it TBC layout
+        #print(dy)
+        #y = y.cuda(cuda_device)
+        y.backward(dy)
+        #print(x.grad)
+        #print(single_layer.weight.grad)
+        #print(single_layer.bias.grad)
+        dx = x.grad;
+        dw = single_layer.weight.grad
+        db = single_layer.bias.grad
+        y2.backward(dy)
+        #print(convout)
+        #print(convout.grad)
+        dconvout = convout.grad
+        fo = open(arg_list.foname + "_grads.tsv", "w")
+        fo.write("dx(T={},B={},C={})\n".format(dx.size(0),
+                                               dx.size(1),dx.size(2)))
+        for batch in range(dx.size(1)):
+            for ch in range(dx.size(2)):
+                for idx in range(dx.size(0)):
+                    fo.write("{0:.4f}\t".format(dx[idx][batch][ch].item()))
+                fo.write("\n")
+        fo.write("dw(K={},I={},O={})\n".format(dw.size(0),
+                                               dw.size(1),dw.size(2)))
+        for out_ch in range(dw.size(2)):
+            for in_ch in range(dw.size(1)):
+                for k in range(dw.size(0)):
+                    fo.write("{0:.4f}\t".format(dw[k][in_ch][out_ch].item()))
+                fo.write("\n")
+        fo.write("db(O={})\n".format(db.size(0)))
+        for out_ch in range(db.size(0)):
+            fo.write("{0:.4f}\n".format(db[out_ch].item()))
+        fo.write("dconvout(T={},B={},C={})\n".format(dconvout.size(0),
+                                                     dconvout.size(1),
+                                                     dconvout.size(2)))
+        for bat in range(dconvout.size(1)):
+            for ch in range(dconvout.size(2)):
+                for idx in range(dconvout.size(0)):
+                    fo.write("{0:.4f}\t".format(dconvout[idx][bat][ch].item()))
+                fo.write("\n")
+        fo.close()
 
 if "__main__" == __name__:
     main(sys.argv)
