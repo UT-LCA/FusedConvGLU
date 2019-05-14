@@ -529,6 +529,7 @@ int main(int argc, char *argv[]) {
       }
       float *WGdata_GPU;
       checkCUDA(cudaMalloc(&WGdata_GPU, Wsize * sizeof(float)));
+      checkCUDA(cudaMemset(WGdata_GPU, 0, Wsize * sizeof(float)));
       checkCUDNN(cudnnConvolutionBackwardFilter(cudnn,
                                                 &alpha,
                                                 in_desc,
@@ -593,6 +594,7 @@ int main(int argc, char *argv[]) {
         checkCUDA(cudaMalloc(&workspace, bwd_d_algos[0].memory));
       }
       float *IGdata_GPU = Idata_GPU; // could reuse
+      checkCUDA(cudaMemset(IGdata_GPU, 0, Isize * sizeof(float)));
       checkCUDNN(cudnnConvolutionBackwardData(cudnn,
                                               &alpha,
                                               fil_desc,
