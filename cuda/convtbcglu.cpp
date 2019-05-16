@@ -176,111 +176,102 @@ torch::Tensor convtbcglu_forward(
   
   convtbcglu_cuda(inputPlanes, kernelSize, outputPlanes, halfSlide, batchSize,
                   self, weight, bias, output);
-  printOutTensor(output);
-  
-  // Now CUDA //
-  
-  
-  
-  /*
-  for (int k = 0; k < kernelSize; k++) {
-    int iShift = std::max(0, static_cast<int>(k - real_pad));
-    int oShift = std::max(0, static_cast<int>(real_pad - k));
-    int t = std::min(inputLength + real_pad - k, outputLength) - oShift;
-    // Note: gemm assumes column-major matrices
-    // input    is l*m (row-major)
-    // weight   is m*r (row-major)
-    // output   is l*r (row-major)
-    if (t > 0) {
-      torch::Tensor W = weight[k]; // Tensor two dimension
-      torch::Tensor I = self.narrow(0, iShift, t).view({t * batchSize, inputPlanes}); // flattened two-dimensional matrix
-      torch::Tensor O = output.narrow(0, oShift, t).view({t * batchSize, outputPlanes}); // flattened two-dimensional matrix
-      O.addmm_(I, W); // matrix multiplication and addition
-    }
-	std::cout<<"Iteration: "<< k << std::endl;
-	printOutTensor(output);
-  }
-  */
+  printOutTensor(output); 
   
   return output;
   
-  
-  /*
-  torch::Device deviceCPU(torch::kCPU);
-  torch::Device deviceGPU(torch::kCPU);
-  
-  if (torch::cuda::is_available()) 
-  {
-      std::cout << "CUDA is available! Run on GPU." << std::endl;
-      deviceGPU = torch::kCUDA;
-
-  }
-  
-  test = torch::rand({2, 3});
-  torch::Tensor gpu_test = test.to(deviceGPU,at::kFloat,true,true);
-  
-  torch::Tensor back_test = gpu_test.to(deviceCPU, at::kFloat,true,true);
-  
-  std::cout << test << std::endl;
-  std::cout << gpu_test << std::endl;
-  std::cout << back_test << std::endl;
-  
-  std::cout << self << std::endl;
-  std::cout << weight << std::endl;
-  std::cout << bias << std::endl;
-  
-  */
-  
-  /*
-  std::cout << "Hello from convtbcglu_forward()\n";
-  AT_CHECK(self.dim() == 3, "Input must have 3 dims: time, batch, "
-      "in_channel");
-  AT_CHECK(weight.dim() == 3, "Weight tensor must have 3 dims: kernel_width,"
-      " in_channels, out_channels.");
-  AT_CHECK(bias.dim() == 1, "Bias must be 1-D");
-
-  auto input_size = self.sizes();
-  auto weight_size = weight.sizes();
-
-  auto i_t_len = input_size[0];
-  auto i_b_len = input_size[1];
-  auto i_c_len = input_size[2];
-  std::cout << "Input(" << i_t_len << "," << i_b_len << "," << i_c_len << ")\n";
-  std::cout << self << std::endl;
-  std::cout << "Input[0]:\n";
-  std::cout << self[0] << std::endl;
-  std::cout << "Input[2][1][0]:\n";
-  std::cout << self[2][1][0] << std::endl;
-
-  auto w_k_len = weight_size[0];
-  auto w_i_ch = weight_size[1];
-  auto w_o_ch = weight_size[2];
-  std::cout << "Weight(" << w_k_len << "," << w_i_ch << "," << w_o_ch << ")\n";
-  AT_CHECK(i_c_len == w_i_ch, "Input dim 2 (input channels) "
-      "is not == dim 1 in the weight tensor");
-  AT_CHECK(w_o_ch == bias.sizes()[0], "Bias size must equal dim 2 in "
-      "the weight tensor (output channels).");
-  std::cout << weight << std::endl;
-
-  */
-  //return output;
 }
 
-//std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> conv_tbc_backernelSizeard(
-void convtbcglu_backernelSizeard(
-    const torch::Tensor& dOutput,
-    const torch::Tensor& input,
-    const torch::Tensor& weight,
-    const torch::Tensor& bias,
-    int64_t pad) {
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> convtbcglu_backernelSizeard(
+const torch::Tensor& dOutput, 
+const torch::Tensor& input, 
+const torch::Tensor& weight, 
+const torch::Tensor& bias, 
+int64_t pad) 
+{
+  at::IntArrayRef input_size  = input.sizes();
+  at::IntArrayRef weight_size = weight.sizes();
 
-  std::cout << "Hello from convtbcglu_forward()\n";
+  int inputLength      = input_size[0];
+  int batchSize        = input_size[1];
+  int inputPlanes      = input_size[2];
+  int outputPlanes     = weight_size[2];
+  int kernelSize       = weight.sizes()[0];
+  int outputLength     = input_size[0] - kernelSize + 1 + pad * 2;
+  int real_pad         = (outputLength - inputLength + kernelSize - 1) / 2;
 
-  //return std::make_tuple(dInput, dWeight, dBias);
+  std::cout << "Input Length : " << inputLength   << std::endl;
+  std::cout << "Batch Size   : " << batchSize     << std::endl;
+  std::cout << "Input Planes : " << inputPlanes   << std::endl;
+  std::cout << "Output Planes: " << outputPlanes  << std::endl;
+  std::cout << "kernelSize   : " << kernelSize    << std::endl;
+  std::cout << "Output Length: " << outputLength  << std::endl;
+  std::cout << "Real Padding : " << real_pad      << std::endl;
+  
+   // Printing
+  std::cout<<"Before backward" << std::endl;
+  std::cout<<"dOutput Tensor"<<std::endl;
+  printOutTensor(dOutput);
+  
+  std::cout<<"input Tensor"<<std::endl;
+  printSelfTensor(input);
+
+  std::cout<<"Weight Tensor"<<std::endl;
+  printWeightTensor(weight);
+  
+  std::cout<<"Bias Tensor"<<std::endl;
+  printBiasTensor(bias);
+  
+  torch::Tensor dInput = at::zeros_like(input);
+  for (int k = 0; k < kernelSize; k++) {
+    int iShift = std::max(0, k - real_pad);
+    int oShift = std::max(0, real_pad - k);
+    int t = std::min(inputLength + real_pad - k, outputLength) - oShift;
+    // dOutput * T(weight) -> dInput
+    if (t > 0) {
+      torch::Tensor dO = dOutput.narrow(0, oShift, t).view({t * batchSize, outputPlanes});
+      torch::Tensor dI = dInput.narrow(0, iShift, t).view({t * batchSize, inputPlanes});
+      dI.addmm_(dO, weight[k].t());
+    }
+  }
+
+  torch::Tensor dWeight = at::zeros_like(weight);
+  for (int k = 0; k < kernelSize; k++) {
+    int iShift = std::max(0, k - real_pad);
+    int oShift = std::max(0, real_pad - k);
+    int t = std::min(inputLength + real_pad - k, outputLength) - oShift;
+    // T(input) * dOutput -> dWeight
+    if (t > 0) {
+      torch::Tensor dW = dWeight[k];
+      torch::Tensor dO = dOutput.narrow(0, oShift, t).view({t * batchSize, outputPlanes});
+      torch::Tensor I = input.narrow(0, iShift, t).view({t * batchSize, inputPlanes}).t();
+      dW.addmm_(I, dO);
+    }
+  }
+
+  torch::Tensor dBias = at::zeros_like(bias);
+  torch::Tensor tmp = dOutput.sum(0, false);
+  dBias.copy_(tmp.sum(0));
+
+  std::cout<<"After backward" << std::endl;
+  
+  std::cout<<"input Tensor"<<std::endl;
+  printSelfTensor(dInput);
+
+  std::cout<<"Weight Tensor"<<std::endl;
+  printWeightTensor(dWeight);
+  
+  std::cout<<"Bias Tensor"<<std::endl;
+  printBiasTensor(dBias);
+  
+  return std::make_tuple(dInput, dWeight, dBias);
+  
+  
+  
 }
 
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("forward", &convtbcglu_forward, "conv_tbc CUDA forward fused with glu");
-  m.def("backernelSizeard", &convtbcglu_backernelSizeard, "conv_tbc CUDA backernelSizeard fused with glu");
+  m.def("backward", &convtbcglu_backernelSizeard, "conv_tbc CUDA backward fused with glu");
 }
